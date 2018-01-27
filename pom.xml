@@ -9,7 +9,7 @@
   <name>mini-mybaits</name>
   
   <build>
-    <finalName>bibi-mybatis</finalName>
+    <finalName>mini-mybatis</finalName>
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
