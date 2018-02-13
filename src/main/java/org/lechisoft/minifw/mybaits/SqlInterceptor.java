@@ -32,243 +32,264 @@ import org.lechisoft.minifw.log.MiniLog;
 //                RowBounds.class, ResultHandler.class, CacheKey.class, BoundSql.class }),
 //        @Signature(method = "update", type = Executor.class, args = { MappedStatement.class, Object.class }) })
 @Intercepts({
-        @Signature(type = StatementHandler.class, method = "prepare", args = { Connection.class, Integer.class }) })
+		@Signature(type = StatementHandler.class, method = "prepare", args = { Connection.class, Integer.class }) })
 public class SqlInterceptor implements Interceptor {
 
-    public enum DataBaseType {
-        ORACLE, SQLSERVER, MYSQL
-    }
+	public enum DataBaseType {
+		ORACLE, SQLSERVER, MYSQL
+	}
 
-    DataBaseType dataBaseType = DataBaseType.ORACLE;
+	DataBaseType dataBaseType = DataBaseType.ORACLE;
 
-    public SqlInterceptor(DataBaseType type) {
-        this.dataBaseType = type;
-    }
+	public SqlInterceptor(DataBaseType type) {
+		this.dataBaseType = type;
+	}
 
-    public Object intercept(Invocation invocation) throws Throwable {
+	public Object intercept(Invocation invocation) throws Throwable {
 
-        if (invocation.getTarget() instanceof RoutingStatementHandler) {
-            RoutingStatementHandler routingStatementHandler = (RoutingStatementHandler) invocation.getTarget();
-            StatementHandler statementHandler = (StatementHandler) ReflectUtil.getFieldValue(routingStatementHandler,
-                    "delegate");
+		if (invocation.getTarget() instanceof RoutingStatementHandler) {
+			RoutingStatementHandler routingStatementHandler = (RoutingStatementHandler) invocation.getTarget();
+			StatementHandler statementHandler = (StatementHandler) ReflectUtil.getFieldValue(routingStatementHandler,
+					"delegate");
 
-            // 获取分页对象
-            Paging paging = getPaging(statementHandler);
+			// 获取Paging对象
+			Paging paging = getPaging(statementHandler.getBoundSql());
 
-            if (paging != null && paging.getEnabled() == true) {
+			if (null != paging && paging.getEnabled()) {
 
-                // 获取并设置总记录数、总页数
-                Connection connection = (Connection) invocation.getArgs()[0];
-                int totalRecord = this.getTotalRecord(statementHandler, connection, paging);
-                paging.setTotalRecord(totalRecord);
+				// 获取并设置总记录数、总页数
+				Connection connection = (Connection) invocation.getArgs()[0];
+				int totalRecord = this.getTotalRecord(statementHandler, connection, paging);
+				paging.setTotalRecord(totalRecord);
 
-                int pageSize = paging.getPageSize();
-                int totalPage = totalRecord % pageSize == 0 ? totalRecord / pageSize : totalRecord / pageSize + 1;
-                paging.setTotalPage(totalPage);
+				int pageSize = paging.getPageSize();
+				int totalPage = totalRecord % pageSize == 0 ? totalRecord / pageSize : totalRecord / pageSize + 1;
+				paging.setTotalPage(totalPage);
 
-                int gotoPage = paging.getGotoPage();
-                gotoPage = gotoPage < 1 ? 1 : gotoPage;
-                gotoPage = gotoPage > totalPage ? totalPage : gotoPage;
-                paging.setGotoPage(gotoPage);
+				int gotoPage = paging.getGotoPage();
+				gotoPage = gotoPage < 1 ? 1 : gotoPage;
+				gotoPage = gotoPage > totalPage ? totalPage : gotoPage;
+				paging.setGotoPage(gotoPage);
 
-                // 处理分页
-                this.paging(statementHandler, paging);
-            }
+				// 处理分页
+				this.paging(statementHandler, paging);
+			}
 
-            // 获取并记录Sql日志
-            String sql = this.getSql(statementHandler);
-            MiniLog.debug("sql:\r\n" + sql);
-        }
+			// 获取并记录Sql日志
+			String sql = this.getSql(statementHandler.getBoundSql());
+			MiniLog.debug("sql:\r\n" + sql);
+		}
 
-        return invocation.proceed();
-    }
+		return invocation.proceed();
+	}
 
-    public Object plugin(Object target) {
-        return Plugin.wrap(target, this);
-    }
+	public Object plugin(Object target) {
+		return Plugin.wrap(target, this);
+	}
 
-    public void setProperties(Properties arg0) {
-    }
+	public void setProperties(Properties arg0) {
+	}
 
-    private Paging getPaging(StatementHandler statementHandler) {
-        BoundSql boundSql = statementHandler.getBoundSql();
-        Object paramObject = boundSql.getParameterObject();
+	/**
+	 * 从ParameterObject中获取Paging对象
+	 * 
+	 * @param boundSql
+	 *            BoundSql对象
+	 * @return Paging对象
+	 */
+	private Paging getPaging(BoundSql boundSql) {
+		Object paramObject = boundSql.getParameterObject();
 
-        Paging paging = null;
+		Paging paging = null;
+		if (null != paramObject) {
+			if (this.isBaseType(paramObject)) {
 
-        if (paramObject != null) {
-            if (paramObject instanceof Map) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> paramObjectMap = (Map<String, Object>) paramObject;
-                for (Map.Entry<String, Object> entry : paramObjectMap.entrySet()) {
-                    if (entry.getValue() instanceof Paging) {
-                        paging = (Paging) entry.getValue();
-                        break;
-                    }
-                }
-            } else {
+			} else if (paramObject instanceof Map) {
+				@SuppressWarnings("unchecked")
+				Map<String, Object> paramObjectMap = (Map<String, Object>) paramObject;
+				for (Map.Entry<String, Object> entry : paramObjectMap.entrySet()) {
+					if (entry.getValue() instanceof Paging) {
+						paging = (Paging) entry.getValue();
+						break;
+					}
+				}
+			} else {
+				Field[] fields = null;
+				if (paramObject.getClass().getSuperclass() != null
+						&& paramObject.getClass().getSuperclass().equals(Pageable.class)) {
+					fields = paramObject.getClass().getSuperclass().getDeclaredFields();
+				} else {
+					fields = paramObject.getClass().getDeclaredFields();
+				}
 
-                Field[] fields = null;
-                if (paramObject.getClass().getSuperclass() != null
-                        && paramObject.getClass().getSuperclass().equals(Pageable.class)) {
-                    fields = paramObject.getClass().getSuperclass().getDeclaredFields();
-                } else {
-                    fields = paramObject.getClass().getDeclaredFields();
-                }
+				for (Field itemField : fields) {
+					if (itemField.getType().equals(Paging.class)) {
+						itemField.setAccessible(true);
 
-                for (Field itemField : fields) {
-                    if (itemField.getType().equals(Paging.class)) {
-                        itemField.setAccessible(true);
+						try {
+							paging = (Paging) itemField.get(paramObject);
+						} catch (IllegalArgumentException e) {
+							MiniLog.error("", e);
+						} catch (IllegalAccessException e) {
+							MiniLog.error("", e);
+						}
+						break;
+					}
+				}
+			}
+		}
+		return paging;
+	}
 
-                        try {
-                            paging = (Paging) itemField.get(paramObject);
-                        } catch (IllegalArgumentException e) {
-                            MiniLog.error("", e);
-                        } catch (IllegalAccessException e) {
-                            MiniLog.error("", e);
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-        return paging;
-    }
+	/**
+	 * 获取总记录数
+	 * 
+	 * @param statementHandler
+	 * @param connection
+	 * @param paging
+	 * @return
+	 * @throws Throwable
+	 */
+	private int getTotalRecord(StatementHandler statementHandler, Connection connection, Paging paging)
+			throws Throwable {
 
-    private int getTotalRecord(StatementHandler statementHandler, Connection connection, Paging paging)
-            throws Throwable {
+		BoundSql boundSql = statementHandler.getBoundSql();
+		List<ParameterMapping> parameterMappings = boundSql.getParameterMappings();
+		String sql = boundSql.getSql().toLowerCase();
+		sql = "select count(1) " + sql.substring(sql.indexOf("from"));
 
-        BoundSql boundSql = statementHandler.getBoundSql();
-        Object paramObject = boundSql.getParameterObject();
-        String sql = boundSql.getSql().toLowerCase();
-        sql = "select count(*) " + sql.substring(sql.indexOf("from"));
+		PreparedStatement pstmt = null;
+		pstmt = connection.prepareStatement(sql);
 
-        PreparedStatement pstmt = null;
-        pstmt = connection.prepareStatement(sql);
+		// 通过反射获取delegate父类BaseStatementHandler的mappedStatement属性
+		MappedStatement mappedStatement = (MappedStatement) ReflectUtil.getFieldValue(statementHandler,
+				"mappedStatement");
+		Object paramObject = boundSql.getParameterObject();
+		BoundSql countBoundSql = new BoundSql(mappedStatement.getConfiguration(), sql, parameterMappings, paramObject);
+		ParameterHandler parameterHandler = new DefaultParameterHandler(mappedStatement, paramObject, countBoundSql);
+		parameterHandler.setParameters(pstmt);
 
-        // 通过反射获取delegate父类BaseStatementHandler的mappedStatement属性
-        MappedStatement mappedStatement = (MappedStatement) ReflectUtil.getFieldValue(statementHandler,
-                "mappedStatement");
-        List<ParameterMapping> parameterMappings = boundSql.getParameterMappings();
-        BoundSql countBoundSql = new BoundSql(mappedStatement.getConfiguration(), sql, parameterMappings, paramObject);
-        ParameterHandler parameterHandler = new DefaultParameterHandler(mappedStatement, paramObject, countBoundSql);
-        parameterHandler.setParameters(pstmt);
+		// 记录SQL
+		MiniLog.debug("sql:\r\n" + this.getSql(countBoundSql));
 
-        ResultSet rs = null;
-        rs = pstmt.executeQuery();
+		int num = 0;
+		ResultSet rs = pstmt.executeQuery();
+		if (rs.next()) {
+			num = rs.getInt(1);
+			rs.close();
+		}
+		return num;
+	}
 
-        int totalRecord = 0;
-        if (rs.next()) {
-            totalRecord = rs.getInt(1);
-        }
+	private void paging(StatementHandler statementHandler, Paging paging) throws Throwable {
 
-        return totalRecord;
-    }
+		BoundSql boundSql = statementHandler.getBoundSql();
+		String sql = boundSql.getSql();
 
-    private void paging(StatementHandler statementHandler, Paging paging) throws Throwable {
+		if (paging != null) {
 
-        BoundSql boundSql = statementHandler.getBoundSql();
-        String sql = boundSql.getSql();
+			int gotoPage = paging.getGotoPage();
+			int pageSize = paging.getPageSize();
 
-        if (paging != null) {
+			StringBuffer stbSql = new StringBuffer();
+			// ORACLE情况下
+			if (this.dataBaseType == DataBaseType.ORACLE) {
+				int num1 = (gotoPage - 1) * pageSize + 1;
+				int num2 = gotoPage * pageSize;
 
-            int gotoPage = paging.getGotoPage();
-            int pageSize = paging.getPageSize();
+				stbSql.append("SELECT * FROM (SELECT TEMPTABLE000.*, ROWNUM NO000 FROM (");
+				stbSql.append(sql);
+				stbSql.append(") TEMPTABLE000 WHERE ROWNUM <= " + num2 + ") WHERE NO000 >= " + num1);
+			}
+			// SQLSERVER
+			if (this.dataBaseType == DataBaseType.SQLSERVER) {
+				int num1 = (gotoPage - 1) * pageSize + 1;
+				int num2 = gotoPage * pageSize;
 
-            StringBuffer stbSql = new StringBuffer();
-            // ORACLE情况下
-            if (this.dataBaseType == DataBaseType.ORACLE) {
-                int num1 = (gotoPage - 1) * pageSize + 1;
-                int num2 = gotoPage * pageSize;
+				// 要求sql自身带有ROW_NUMBER()函数，并将该列命名为ROWNUM。
+				// 如：ROW_NUMBER() OVER(Order by [CREATE_DATE]
+				// DESC,[CREATE_TIME] DESC ) AS ROWNUM
+				stbSql.append("SELECT * FROM (");
+				stbSql.append(sql);
+				stbSql.append(") RESULT_WITH_ROWNUM WHERE ROWNUM BETWEEN " + num1 + " AND " + num2);
+			}
+			// MYSQL
+			else if (this.dataBaseType == DataBaseType.MYSQL) {
+				int num1 = (gotoPage - 1) * pageSize;
+				int num2 = pageSize;
 
-                stbSql.append("SELECT * FROM (SELECT TEMPTABLE000.*, ROWNUM NO000 FROM (");
-                stbSql.append(sql);
-                stbSql.append(") TEMPTABLE000 WHERE ROWNUM <= " + num2 + ") WHERE NO000 >= " + num1);
-            }
-            // SQLSERVER
-            if (this.dataBaseType == DataBaseType.SQLSERVER) {
-                int num1 = (gotoPage - 1) * pageSize + 1;
-                int num2 = gotoPage * pageSize;
+				stbSql.append("SELECT * FROM (");
+				stbSql.append(sql);
+				stbSql.append(") TEMPTABLE000 LIMIT " + num1 + "," + num2);
+			}
 
-                // 要求sql自身带有ROW_NUMBER()函数，并将该列命名为ROWNUM。
-                // 如：ROW_NUMBER() OVER(Order by [CREATE_DATE]
-                // DESC,[CREATE_TIME] DESC ) AS ROWNUM
-                stbSql.append("SELECT * FROM (");
-                stbSql.append(sql);
-                stbSql.append(") RESULT_WITH_ROWNUM WHERE ROWNUM BETWEEN " + num1 + " AND " + num2);
-            }
-            // MYSQL
-            else if (this.dataBaseType == DataBaseType.MYSQL) {
-                int num1 = (gotoPage - 1) * pageSize;
-                int num2 = pageSize;
+			Field sqlField = boundSql.getClass().getDeclaredField("sql");
+			sqlField.setAccessible(true);
+			sqlField.set(boundSql, stbSql.toString());
+		}
+	}
 
-                stbSql.append("SELECT * FROM (");
-                stbSql.append(sql);
-                stbSql.append(") TEMPTABLE000 LIMIT " + num1 + "," + num2);
-            }
+	/**
+	 * 获取SQL
+	 * 
+	 * @param boundSql
+	 *            BoundSql对象
+	 * @return SQL
+	 * @throws Throwable
+	 */
+	@SuppressWarnings("rawtypes")
+	private String getSql(BoundSql boundSql) throws Throwable {
+		String sql = boundSql.getSql();
+		Object paramObject = boundSql.getParameterObject();
 
-            Field sqlField = boundSql.getClass().getDeclaredField("sql");
-            sqlField.setAccessible(true);
-            sqlField.set(boundSql, stbSql.toString());
-        }
-    }
+		// 遍历SQL参数
+		List<ParameterMapping> pms = boundSql.getParameterMappings();
+		for (ParameterMapping pm : pms) {
 
-    private String getSql(StatementHandler statementHandler) throws Throwable {
+			String paramName = pm.getProperty(); // SQL参数名称
+			Class<?> paramJavaType = pm.getJavaType(); // SQL参数Java类型
 
-        BoundSql boundSql = statementHandler.getBoundSql();
-        Object paramObject = boundSql.getParameterObject();
-        String sql = boundSql.getSql();
+			// 从参ParameterObject中获取参数的值
+			Object paramValue = null;
+			if (null != paramObject) {
+				if (this.isBaseType(paramObject)) {
+					paramValue = paramObject;
+				} else if (paramObject instanceof Map) {
+					paramValue = ((Map) paramObject).get(paramName);
+				} else {
+					Field field = paramObject.getClass().getDeclaredField(paramName);
+					field.setAccessible(true);
+					paramValue = field.get(paramObject);
+				}
+			}
 
-        List<ParameterMapping> paramList = boundSql.getParameterMappings();
+			if (null == paramValue) {
+				MiniLog.error("the value of sql parameter[" + paramName + "] does not exist.");
+			}
 
-        for (ParameterMapping param : paramList) {
+			// 替换SQL中参数的占位符
+			paramValue = null == paramValue ? "" : paramValue;
+			paramValue = paramJavaType.equals(String.class) ? "'" + paramValue + "'" : paramValue;
+			sql = sql.replaceFirst("\\?", paramValue.toString());
+		}
+		return sql;
+	}
 
-            // 获取Sql参数的名称
-            String paramName = param.getProperty();
+	/**
+	 * 判断是否基本类型
+	 * 
+	 * @param val
+	 *            对象
+	 * @return 是否基本类型
+	 */
+	private boolean isBaseType(Object val) {
 
-            // 获取Sql参数的Java类型
-            Class<?> paramJavaType = param.getJavaType();
-
-            String paramValue = null;
-
-            if (paramObject != null) {
-                if (this.isBaseType(paramObject)) {
-                    paramValue = paramObject.toString();
-                } else if (paramObject instanceof Map) {
-                    @SuppressWarnings("unchecked")
-                    Map<String, Object> paramObjectMap = (Map<String, Object>) paramObject;
-                    for (Map.Entry<String, Object> entry : paramObjectMap.entrySet()) {
-                        if (entry.getKey().equals(paramName)) {
-                            paramValue = entry.getValue().toString();
-                            break;
-                        }
-                    }
-                } else {
-                    Field field = paramObject.getClass().getDeclaredField(paramName);
-                    field.setAccessible(true);
-                    paramValue = field.get(paramObject).toString();
-                }
-            }
-
-            if (paramValue == null) {
-                MiniLog.error("the value of sql parameter[" + paramName + "] does not exist.");
-                paramValue = "";
-            }
-
-            paramValue = paramJavaType.equals(String.class) ? "'" + paramValue + "'" : paramValue;
-            sql = sql.replaceFirst("\\?", paramValue);
-        }
-        return sql;
-    }
-
-    private boolean isBaseType(Object val) {
-
-        if (val instanceof String || val instanceof Integer || val instanceof Byte || val instanceof Long
-                || val instanceof Double || val instanceof Float || val instanceof Character || val instanceof Short
-                || val instanceof BigDecimal || val instanceof BigInteger || val instanceof Boolean
-                || val instanceof Date) {
-            return true;
-        }
-        return false;
-    }
+		if (val instanceof String || val instanceof Integer || val instanceof Byte || val instanceof Long
+				|| val instanceof Double || val instanceof Float || val instanceof Character || val instanceof Short
+				|| val instanceof BigDecimal || val instanceof BigInteger || val instanceof Boolean
+				|| val instanceof Date) {
+			return true;
+		}
+		return false;
+	}
 }
