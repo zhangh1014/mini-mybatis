@@ -74,10 +74,6 @@ public class SqlInterceptor implements Interceptor {
 				// 处理分页
 				this.paging(statementHandler, paging);
 			}
-
-			// 获取并记录Sql日志
-			String sql = this.getSql(statementHandler.getBoundSql());
-			MiniLog.debug("sql:\r\n" + sql);
 		}
 
 		return invocation.proceed();
@@ -152,31 +148,49 @@ public class SqlInterceptor implements Interceptor {
 	 */
 	private int getTotalRecord(StatementHandler statementHandler, Connection connection, Paging paging)
 			throws Throwable {
+		int num = 0;
 
 		BoundSql boundSql = statementHandler.getBoundSql();
 		List<ParameterMapping> parameterMappings = boundSql.getParameterMappings();
 		String sql = boundSql.getSql().toLowerCase();
-		sql = "select count(1) " + sql.substring(sql.indexOf("from"));
 
-		PreparedStatement pstmt = null;
-		pstmt = connection.prepareStatement(sql);
+		int fromIdx = -1;
+		if (-1 == fromIdx) {
+			fromIdx = sql.indexOf("\nfrom\n");
+		}
+		if (-1 == fromIdx) {
+			fromIdx = sql.indexOf(" from ");
+		}
+		if (-1 == fromIdx) {
+			fromIdx = sql.indexOf("\nfrom ");
+		}
+		if (-1 == fromIdx) {
+			fromIdx = sql.indexOf(" from\n");
+		}
+		if (-1 != fromIdx) {
+			sql = "select count(1) " + sql.substring(fromIdx);
 
-		// 通过反射获取delegate父类BaseStatementHandler的mappedStatement属性
-		MappedStatement mappedStatement = (MappedStatement) ReflectUtil.getFieldValue(statementHandler,
-				"mappedStatement");
-		Object paramObject = boundSql.getParameterObject();
-		BoundSql countBoundSql = new BoundSql(mappedStatement.getConfiguration(), sql, parameterMappings, paramObject);
-		ParameterHandler parameterHandler = new DefaultParameterHandler(mappedStatement, paramObject, countBoundSql);
-		parameterHandler.setParameters(pstmt);
+			PreparedStatement pstmt = null;
+			pstmt = connection.prepareStatement(sql);
 
-		// 记录SQL
-		MiniLog.debug("sql:\r\n" + this.getSql(countBoundSql));
+			// 通过反射获取delegate父类BaseStatementHandler的mappedStatement属性
+			MappedStatement mappedStatement = (MappedStatement) ReflectUtil.getFieldValue(statementHandler,
+					"mappedStatement");
+			Object paramObject = boundSql.getParameterObject();
+			BoundSql countBoundSql = new BoundSql(mappedStatement.getConfiguration(), sql, parameterMappings,
+					paramObject);
+			ParameterHandler parameterHandler = new DefaultParameterHandler(mappedStatement, paramObject,
+					countBoundSql);
+			parameterHandler.setParameters(pstmt);
 
-		int num = 0;
-		ResultSet rs = pstmt.executeQuery();
-		if (rs.next()) {
-			num = rs.getInt(1);
-			rs.close();
+			// 记录SQL
+			MiniLog.debug("total record sql:\n" + this.getSql(countBoundSql));
+
+			ResultSet rs = pstmt.executeQuery();
+			if (rs.next()) {
+				num = rs.getInt(1);
+				rs.close();
+			}
 		}
 		return num;
 	}
@@ -197,9 +211,9 @@ public class SqlInterceptor implements Interceptor {
 				int num1 = (gotoPage - 1) * pageSize + 1;
 				int num2 = gotoPage * pageSize;
 
-				stbSql.append("SELECT * FROM (SELECT TEMPTABLE000.*, ROWNUM NO000 FROM (");
+				stbSql.append("SELECT * FROM (SELECT TEMPTABLE000.*, ROWNUM NO000 FROM (\n");
 				stbSql.append(sql);
-				stbSql.append(") TEMPTABLE000 WHERE ROWNUM <= " + num2 + ") WHERE NO000 >= " + num1);
+				stbSql.append("\n) TEMPTABLE000 WHERE ROWNUM <= " + num2 + ") WHERE NO000 >= " + num1);
 			}
 			// SQLSERVER
 			if (this.dataBaseType == DataBaseType.SQLSERVER) {
@@ -209,23 +223,26 @@ public class SqlInterceptor implements Interceptor {
 				// 要求sql自身带有ROW_NUMBER()函数，并将该列命名为ROWNUM。
 				// 如：ROW_NUMBER() OVER(Order by [CREATE_DATE]
 				// DESC,[CREATE_TIME] DESC ) AS ROWNUM
-				stbSql.append("SELECT * FROM (");
+				stbSql.append("SELECT * FROM (\n");
 				stbSql.append(sql);
-				stbSql.append(") RESULT_WITH_ROWNUM WHERE ROWNUM BETWEEN " + num1 + " AND " + num2);
+				stbSql.append("\n) RESULT_WITH_ROWNUM WHERE ROWNUM BETWEEN " + num1 + " AND " + num2);
 			}
 			// MYSQL
 			else if (this.dataBaseType == DataBaseType.MYSQL) {
 				int num1 = (gotoPage - 1) * pageSize;
 				int num2 = pageSize;
 
-				stbSql.append("SELECT * FROM (");
+				stbSql.append("SELECT * FROM (\n");
 				stbSql.append(sql);
-				stbSql.append(") TEMPTABLE000 LIMIT " + num1 + "," + num2);
+				stbSql.append("\n) TEMPTABLE000 LIMIT " + num1 + "," + num2);
 			}
 
 			Field sqlField = boundSql.getClass().getDeclaredField("sql");
 			sqlField.setAccessible(true);
 			sqlField.set(boundSql, stbSql.toString());
+
+			// 记录SQL
+			MiniLog.debug("paging sql:\n" + this.getSql(boundSql));
 		}
 	}
 
