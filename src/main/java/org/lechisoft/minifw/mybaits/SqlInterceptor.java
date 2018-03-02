@@ -73,6 +73,9 @@ public class SqlInterceptor implements Interceptor {
 
 				// 处理分页
 				this.paging(statementHandler, paging);
+			} else {
+				// 记录SQL
+				MiniLog.debug("paging sql:\n" + this.getSql(statementHandler.getBoundSql()));
 			}
 		}
 
